@@ -1,0 +1,60 @@
+import os
+import rasterio
+import numpy as np
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+os.chdir(BASE_DIR)
+
+STATIC = "data_static/static_fv_10m.tif"
+WETNESS = "data_dynamic_raw/soil/wf_20260206.tif"
+
+MAX_RAIN = 50.0  # normalization constant
+
+os.makedirs("data_dynamic_processed/rainfactor", exist_ok=True)
+os.makedirs("data_dynamic_processed/dynamic_risk", exist_ok=True)
+
+# Load static
+with rasterio.open(STATIC) as src:
+    static_fv = src.read(1)
+    meta = src.meta.copy()
+
+# Clean NoData
+static_fv = np.where(static_fv < -1e30, np.nan, static_fv)
+
+# Load soil
+with rasterio.open(WETNESS) as src:
+    wetness = src.read(1)
+
+rain_folder = "data_dynamic_raw/rainfall"
+
+for file in os.listdir(rain_folder):
+    if file.endswith(".tif"):
+
+        hour = file.split("_")[-1].replace(".tif", "")
+        rain_path = os.path.join(rain_folder, file)
+
+        with rasterio.open(rain_path) as src:
+            rainfall = src.read(1)
+
+        # Normalize rainfall
+        rain_factor = rainfall / MAX_RAIN
+        rain_factor = np.clip(rain_factor, 0, 1)
+
+        # Compute dynamic risk
+        dynamic_risk = static_fv * (0.6 * rain_factor + 0.4 * wetness)
+
+        # Save rainfactor
+        rf_path = f"data_dynamic_processed/rainfactor/rf_{hour}.tif"
+        dr_path = f"data_dynamic_processed/dynamic_risk/dyn_{hour}.tif"
+
+        meta.update(dtype=rasterio.float32)
+
+        with rasterio.open(rf_path, "w", **meta) as dst:
+            dst.write(rain_factor.astype(np.float32), 1)
+
+        with rasterio.open(dr_path, "w", **meta) as dst:
+            dst.write(dynamic_risk.astype(np.float32), 1)
+
+        print(f"Processed hour {hour}")
+
+print("Dynamic computation completed.")
